@@ -3,13 +3,12 @@
  * PDF Compressor Tool – Production Ready for Render Docker
  * 
  * Backend improvements:
- * - Auto-detect Ghostscript binary path (gs) using multiple methods.
- * - Fallback to common paths (/usr/bin/gs, /usr/local/bin/gs).
- * - If Ghostscript not found, return clear JSON error.
- * - Temp directory auto-created with proper permissions.
+ * - Use sys_get_temp_dir() for writable temp directory (Render compatible).
+ * - Auto-create temp directory with proper permissions.
+ * - Detailed error handling for move_uploaded_file() with debug info.
+ * - No warnings/notices in JSON responses.
+ * - Ghostscript auto-detection with fallback.
  * - Secure file handling with unique names and auto-cleanup.
- * - Full error handling for exec() and shell commands.
- * - Clean JSON responses without any extra output (HTML, warnings, notices).
  * 
  * UI, CSS, and JavaScript remain unchanged.
  */
@@ -20,7 +19,9 @@ ob_start();
 // -------------------- CONFIGURATION --------------------
 define('MAX_FILE_SIZE', 100 * 1024 * 1024); // 100 MB
 define('ALLOWED_MIME', 'application/pdf');
-define('TEMP_DIR', __DIR__ . '/temp/');
+
+// Use system temp directory (writable on Render)
+define('TEMP_DIR', sys_get_temp_dir() . DIRECTORY_SEPARATOR);
 
 // -------------------- GHOSTSCRIPT PATH DETECTION --------------------
 /**
@@ -76,18 +77,18 @@ if ($gs_path === false) {
 
 // Create temp directory if not exists with proper permissions
 if (!is_dir(TEMP_DIR)) {
-    mkdir(TEMP_DIR, 0755, true);
+    @mkdir(TEMP_DIR, 0777, true);
     // Ensure write permission for web server
-    chmod(TEMP_DIR, 0755);
+    @chmod(TEMP_DIR, 0777);
 }
 
 // Cleanup old temp files (older than 1 hour)
-if ($handle = opendir(TEMP_DIR)) {
+if ($handle = @opendir(TEMP_DIR)) {
     while (false !== ($file = readdir($handle))) {
         if ($file != '.' && $file != '..') {
             $filepath = TEMP_DIR . $file;
             if (is_file($filepath) && (time() - filemtime($filepath) > 3600)) {
-                unlink($filepath);
+                @unlink($filepath);
             }
         }
     }
@@ -105,7 +106,7 @@ if (isset($_GET['download']) && isset($_GET['file'])) {
         header('Content-Length: ' . filesize($filepath));
         readfile($filepath);
         // Delete after download
-        unlink($filepath);
+        @unlink($filepath);
         exit;
     } else {
         http_response_code(404);
@@ -118,7 +119,7 @@ if (isset($_GET['download']) && isset($_GET['file'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     // Ensure we return JSON
     header('Content-Type: application/json');
-    
+
     // Ensure Ghostscript is available before processing
     if (GS_COMMAND === false) {
         echo json_encode(['error' => 'Ghostscript is not installed or not found. Please contact administrator.']);
@@ -128,7 +129,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
 
     // Check for upload errors
     if (!isset($_FILES['pdf_file']) || $_FILES['pdf_file']['error'] !== UPLOAD_ERR_OK) {
-        echo json_encode(['error' => 'File upload failed.']);
+        $upload_error = $_FILES['pdf_file']['error'] ?? 'No file';
+        echo json_encode(['error' => 'File upload failed. Upload error code: ' . $upload_error]);
         ob_end_flush();
         exit;
     }
@@ -175,9 +177,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     $input_path = TEMP_DIR . 'input_' . $unique_id . '.pdf';
     $output_path = TEMP_DIR . 'compressed_' . $unique_id . '.pdf';
 
+    // Check if temp directory is writable
+    if (!is_dir(TEMP_DIR) || !is_writable(TEMP_DIR)) {
+        echo json_encode([
+            'error' => 'Temp directory is not writable.',
+            'temp_dir' => TEMP_DIR,
+            'is_dir' => is_dir(TEMP_DIR),
+            'is_writable' => is_writable(TEMP_DIR)
+        ]);
+        ob_end_flush();
+        exit;
+    }
+
+    // Verify uploaded file is valid
+    if (!is_uploaded_file($tmp_name)) {
+        echo json_encode(['error' => 'Invalid uploaded file.']);
+        ob_end_flush();
+        exit;
+    }
+
     // Move uploaded file to temp
-    if (!move_uploaded_file($tmp_name, $input_path)) {
-        echo json_encode(['error' => 'Failed to move uploaded file.']);
+    $move_success = @move_uploaded_file($tmp_name, $input_path);
+    if (!$move_success) {
+        // Collect detailed error info
+        $error_details = [
+            'tmp_name' => $tmp_name,
+            'input_path' => $input_path,
+            'temp_dir' => TEMP_DIR,
+            'file_exists_tmp' => file_exists($tmp_name),
+            'is_writable_temp' => is_writable(TEMP_DIR),
+            'error_get_last' => error_get_last(),
+            'upload_error_code' => $_FILES['pdf_file']['error'] ?? 'N/A',
+            'upload_tmp_dir' => ini_get('upload_tmp_dir'),
+            'sys_get_temp_dir' => sys_get_temp_dir()
+        ];
+        echo json_encode([
+            'error' => 'Failed to move uploaded file.',
+            'details' => $error_details
+        ]);
         ob_end_flush();
         exit;
     }
@@ -197,8 +234,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
 
     // Check if output file exists and has size > 0
     if (!file_exists($output_path) || filesize($output_path) == 0) {
-        unlink($input_path);
-        if (file_exists($output_path)) unlink($output_path);
+        @unlink($input_path);
+        if (file_exists($output_path)) @unlink($output_path);
         // Return detailed error from stderr if available
         $error_msg = 'Compression failed.';
         if (!empty($exec_output)) {
@@ -224,7 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     ];
 
     // Clean input file (keep compressed for download)
-    unlink($input_path);
+    @unlink($input_path);
 
     echo json_encode($response);
     ob_end_flush();
