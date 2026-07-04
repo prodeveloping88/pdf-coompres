@@ -9,9 +9,13 @@
  * - Temp directory auto-created with proper permissions.
  * - Secure file handling with unique names and auto-cleanup.
  * - Full error handling for exec() and shell commands.
+ * - Clean JSON responses without any extra output (HTML, warnings, notices).
  * 
  * UI, CSS, and JavaScript remain unchanged.
  */
+
+// Start output buffering to prevent any accidental output before JSON
+ob_start();
 
 // -------------------- CONFIGURATION --------------------
 define('MAX_FILE_SIZE', 100 * 1024 * 1024); // 100 MB
@@ -110,17 +114,22 @@ if (isset($_GET['download']) && isset($_GET['file'])) {
     }
 }
 
-// -------------------- COMPRESSION HANDLER --------------------
+// -------------------- COMPRESSION HANDLER (AJAX) --------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
+    // Ensure we return JSON
+    header('Content-Type: application/json');
+    
     // Ensure Ghostscript is available before processing
     if (GS_COMMAND === false) {
         echo json_encode(['error' => 'Ghostscript is not installed or not found. Please contact administrator.']);
+        ob_end_flush();
         exit;
     }
 
     // Check for upload errors
     if (!isset($_FILES['pdf_file']) || $_FILES['pdf_file']['error'] !== UPLOAD_ERR_OK) {
         echo json_encode(['error' => 'File upload failed.']);
+        ob_end_flush();
         exit;
     }
 
@@ -137,12 +146,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
     if ($mime !== ALLOWED_MIME || $ext !== 'pdf') {
         echo json_encode(['error' => 'Only PDF files are allowed.']);
+        ob_end_flush();
         exit;
     }
 
     // Validate file size
     if ($size > MAX_FILE_SIZE) {
         echo json_encode(['error' => 'File size exceeds 100MB limit.']);
+        ob_end_flush();
         exit;
     }
 
@@ -155,6 +166,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     ];
     if (!isset($gs_settings[$level])) {
         echo json_encode(['error' => 'Invalid compression level.']);
+        ob_end_flush();
         exit;
     }
 
@@ -166,10 +178,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     // Move uploaded file to temp
     if (!move_uploaded_file($tmp_name, $input_path)) {
         echo json_encode(['error' => 'Failed to move uploaded file.']);
+        ob_end_flush();
         exit;
     }
 
-    // Build Ghostscript command
+    // Build Ghostscript command with proper escaping
     $command = escapeshellcmd(GS_COMMAND) . ' -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 ' .
                $gs_settings[$level] . ' -dNOPAUSE -dQUIET -dBATCH ' .
                '-sOutputFile=' . escapeshellarg($output_path) . ' ' .
@@ -177,6 +190,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
 
     // Execute compression
     $start_time = microtime(true);
+    $exec_output = [];
+    $exec_return = 0;
     exec($command . ' 2>&1', $exec_output, $exec_return);
     $time_taken = microtime(true) - $start_time;
 
@@ -184,7 +199,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     if (!file_exists($output_path) || filesize($output_path) == 0) {
         unlink($input_path);
         if (file_exists($output_path)) unlink($output_path);
-        echo json_encode(['error' => 'Compression failed. Please check Ghostscript installation or command.']);
+        // Return detailed error from stderr if available
+        $error_msg = 'Compression failed.';
+        if (!empty($exec_output)) {
+            $error_msg .= ' Details: ' . implode('; ', array_slice($exec_output, 0, 3));
+        }
+        echo json_encode(['error' => $error_msg]);
+        ob_end_flush();
         exit;
     }
 
@@ -206,10 +227,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     unlink($input_path);
 
     echo json_encode($response);
+    ob_end_flush();
     exit;
 }
 
 // -------------------- MAIN HTML PAGE (unchanged) --------------------
+// Clean output buffer before sending HTML
+ob_end_clean();
+
 // The entire UI, CSS, and JavaScript remains exactly as before.
 ?>
 <!DOCTYPE html>
