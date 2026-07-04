@@ -10,7 +10,7 @@
  * - Ghostscript auto-detection with fallback.
  * - Secure file handling with unique names and auto-cleanup.
  * 
- * UI, CSS, and JavaScript remain unchanged.
+ * UI, CSS, and JavaScript remain unchanged except footer fixed on mobile.
  */
 
 // Start output buffering to prevent any accidental output before JSON
@@ -268,11 +268,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['compress'])) {
     exit;
 }
 
-// -------------------- MAIN HTML PAGE (unchanged) --------------------
+// -------------------- MAIN HTML PAGE (unchanged except footer mobile fix) --------------------
 // Clean output buffer before sending HTML
 ob_end_clean();
 
-// The entire UI, CSS, and JavaScript remains exactly as before.
+// The entire UI, CSS, and JavaScript remains exactly as before, 
+// except footer is now fixed at bottom on mobile.
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -902,6 +903,7 @@ ob_end_clean();
         @media (max-width: 768px) {
             .main-wrapper {
                 padding-top: 68px;
+                padding-bottom: 80px; /* extra space for fixed footer */
             }
             nav {
                 padding: 10px 0;
@@ -937,7 +939,15 @@ ob_end_clean();
                 font-size: 0.8rem;
             }
             footer {
-                padding: 15px 0;
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                width: 100%;
+                z-index: 100;
+                padding: 12px 0;
+                margin-top: 0;
+                border-radius: 0;
+                background: linear-gradient(145deg, #1a1a2e, #16213e);
             }
             .footer-powered {
                 font-size: 0.9rem;
@@ -983,6 +993,7 @@ ob_end_clean();
         @media (max-width: 480px) {
             .main-wrapper {
                 padding-top: 62px;
+                padding-bottom: 70px;
             }
             nav {
                 padding: 8px 0;
@@ -1016,6 +1027,9 @@ ob_end_clean();
             .nav-links-mobile a i {
                 width: 20px;
                 font-size: 0.8rem;
+            }
+            footer {
+                padding: 10px 0;
             }
             .footer-powered {
                 font-size: 0.8rem;
@@ -1174,7 +1188,7 @@ ob_end_clean();
             </div>
         </div>
 
-        <!-- ===== FOOTER (sticky bottom) ===== -->
+        <!-- ===== FOOTER (sticky bottom on mobile) ===== -->
         <footer>
             <div class="footer-content">
                 <div class="footer-powered">
